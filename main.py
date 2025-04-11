@@ -1,53 +1,69 @@
-from flask import Flask, request, jsonify
 import requests
 import json
 import re
-import subprocess
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# Function to extract the GraphQL URL from reeldown.io
+def get_graphql_url(instagram_url):
+    url = "https://reeldown.io/reels/api/download/"
+    payload = json.dumps({"url": instagram_url})
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Content-Type': 'application/json',
+        'Origin': 'https://reeldown.io',
+        'Connection': 'keep-alive',
+        'Referer': 'https://reeldown.io/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Priority': 'u=0'
+    }
+
+    response = requests.post(url, headers=headers, data=payload)
+    error_message = response.text
+
+    # Extract the GraphQL URL from the response
+    graphql_url_match = re.search(r'when accessing (https?://[^\s]+)', error_message)
+    
+    if graphql_url_match:
+        return graphql_url_match.group(1)
+    else:
+        return None
+
+# Function to fetch JSON data from the extracted GraphQL URL
+def fetch_json_from_graphql_url(graphql_url):
+    if graphql_url:
+        response = requests.get(graphql_url)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"error": f"Failed to fetch data from GraphQL URL. Status code: {response.status_code}"}
+    else:
+        return {"error": "No GraphQL URL found."}
+
+# API endpoint to get JSON data from Instagram link
 @app.route('/json', methods=['GET'])
 def get_instagram_json():
-    instagram_url = request.args.get("url")
-    if not instagram_url or "instagram.com" not in instagram_url:
-        return jsonify({"error": "Invalid or missing Instagram URL."}), 400
+    instagram_url = request.args.get('url')
+    
+    if not instagram_url:
+        return jsonify({"error": "Instagram URL is required."}), 400
+    
+    # Step 1: Extract GraphQL URL from the reeldown.io response
+    graphql_url = get_graphql_url(instagram_url)
+    
+    # Step 2: Fetch JSON data from GraphQL URL
+    json_data = fetch_json_from_graphql_url(graphql_url)
+    
+    return jsonify(json_data)
 
-    try:
-        # Step 1: Try using instaloader to fetch post info
-        cmd = ["instaloader", "--no-captions", "--no-pictures", "--no-videos", "--no-metadata-json", "--no-compress-json", "--", instagram_url]
-        process = subprocess.run(cmd, capture_output=True, text=True)
-
-        error_output = process.stderr
-
-        # First check for full GraphQL URL
-        graphql_url_match = re.search(r'(https?://www\.instagram\.com/graphql/query\?[^ ]+)', error_output)
-        if not graphql_url_match:
-            # Fallback: Try to extract partial /graphql/query... URL and prepend domain
-            partial_match = re.search(r'(/graphql/query\?[^ ]+)', error_output)
-            if partial_match:
-                graphql_url = "https://www.instagram.com" + partial_match.group(1)
-            else:
-                return jsonify({"error": "Could not extract GraphQL URL from error."}), 500
-        else:
-            graphql_url = graphql_url_match.group(1)
-
-        # Step 2: Fetch JSON from that GraphQL URL
-        graphql_response = requests.get(graphql_url, headers={'User-Agent': 'Mozilla/5.0'})
-
-        if graphql_response.status_code == 200:
-            return jsonify(graphql_response.json())
-        else:
-            return jsonify({
-                "error": f"Failed to fetch JSON from GraphQL URL.",
-                "status_code": graphql_response.status_code
-            }), graphql_response.status_code
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/')
-def home():
-    return "Instagram JSON API is live. Use /json?url=INSTAGRAM_URL"
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+# Run the Flask app
+if __name__ == "__main__":
+    app.run(debug=True)
