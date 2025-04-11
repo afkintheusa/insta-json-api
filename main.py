@@ -1,49 +1,54 @@
-from flask import Flask, request, jsonify
 import requests
 import json
 import re
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# Function to extract the GraphQL URL from reeldown.io
+def get_graphql_url(instagram_url):
+    url = "https://reeldown.io/reels/api/download/"
+    payload = json.dumps({"url": instagram_url})
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'Accept': 'application/json, text/plain, */*',
+        'Content-Type': 'application/json',
+        'Origin': 'https://reeldown.io',
+        'Referer': 'https://reeldown.io/',
+    }
+
+    response = requests.post(url, headers=headers, data=payload)
+    error_message = response.text
+
+    # Extract the GraphQL URL from the response
+    graphql_url_match = re.search(r'when accessing (https?://[^\s]+)', error_message)
+    
+    if graphql_url_match:
+        return graphql_url_match.group(1)
+    else:
+        return None
+
+# API endpoint to get GraphQL URL from Instagram link
 @app.route('/json', methods=['GET'])
-def get_instagram_json():
-    instagram_url = request.args.get("url")
-    if not instagram_url or "instagram.com" not in instagram_url:
-        return jsonify({"error": "Invalid or missing Instagram URL."}), 400
+def get_graphql_json_link():
+    instagram_url = request.args.get('url')
+    
+    if not instagram_url:
+        return jsonify({"error": "Instagram URL is required."}), 400
+    
+    graphql_url = get_graphql_url(instagram_url)
+    
+    if graphql_url:
+        return jsonify({
+            "graphql_url": graphql_url,
+            "note": "Copy this link and open it in your browser to view the full JSON data."
+        })
+    else:
+        return jsonify({"error": "GraphQL URL could not be extracted."}), 500
 
-    try:
-        # Step 1: Ask reeldown.io
-        response = requests.post(
-            "https://reeldown.io/reels/api/download/",
-            headers={
-                'User-Agent': 'Mozilla/5.0',
-                'Content-Type': 'application/json',
-            },
-            data=json.dumps({"url": instagram_url})
-        )
-
-        error_message = response.json().get("error", "")
-        graphql_url_match = re.search(r'when accessing (https?://[^\s]+)', error_message)
-
-        if not graphql_url_match:
-            return jsonify({"error": "Could not extract the GraphQL URL."}), 500
-
-        graphql_url = graphql_url_match.group(1)
-
-        # Step 2: Try to get the JSON from the GraphQL URL
-        graphql_response = requests.get(graphql_url, headers={'User-Agent': 'Mozilla/5.0'})
-        
-        if graphql_response.status_code == 200:
-            return jsonify(graphql_response.json())
-        else:
-            return jsonify({"error": f"Failed to fetch JSON from GraphQL URL. Status code: {graphql_response.status_code}"}), graphql_response.status_code
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/')
-def home():
-    return "Instagram JSON API is live. Use /json?url=INSTAGRAM_URL"
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+# Run the Flask app
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(debug=True, host="0.0.0.0", port=port)
