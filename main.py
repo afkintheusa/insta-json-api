@@ -1,57 +1,49 @@
 from flask import Flask, request, jsonify
-import json
 import requests
+import json
 import re
-from urllib.parse import unquote
 
 app = Flask(__name__)
 
-def get_instagram_graphql_data(instagram_url):
-    reeldown_url = "https://reeldown.io/reels/api/download/"
-    payload = json.dumps({"url": instagram_url})
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
-        'Content-Type': 'application/json',
-    }
-    
-    try:
-        response = requests.post(reeldown_url, headers=headers, data=payload)
-        error_data = response.json()
-        
-        if 'error' not in error_data:
-            return {"error": "Unexpected response from Reeldown"}
-        
-        error_message = error_data['error']
-        url_pattern = r'https://www\.instagram\.com/graphql/query\?[^\s]+'
-        match = re.search(url_pattern, error_message)
-        
-        if not match:
-            return {"error": "Could not extract GraphQL URL"}
-        
-        graphql_url = match.group(0)
-        decoded_url = unquote(graphql_url)
-        
-        graphql_response = requests.get(decoded_url, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0'
-        })
-        
-        if graphql_response.status_code != 200:
-            return {"error": f"Failed to fetch GraphQL data (status {graphql_response.status_code})"}
-        
-        return graphql_response.json()
-        
-    except Exception as e:
-        return {"error": str(e)}
+@app.route('/json', methods=['GET'])
+def get_instagram_json():
+    instagram_url = request.args.get("url")
+    if not instagram_url or "instagram.com" not in instagram_url:
+        return jsonify({"error": "Invalid or missing Instagram URL."}), 400
 
-@app.route('/extract', methods=['GET'])
-def extract_data():
-    instagram_url = request.args.get('url')
-    if not instagram_url:
-        return jsonify({"error": "Missing 'url' parameter"}), 400
-    
-    result = get_instagram_graphql_data(instagram_url)
-    return jsonify(result)
+    try:
+        # Step 1: Ask reeldown.io
+        response = requests.post(
+            "https://reeldown.io/reels/api/download/",
+            headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Content-Type': 'application/json',
+            },
+            data=json.dumps({"url": instagram_url})
+        )
+
+        error_message = response.json().get("error", "")
+        graphql_url_match = re.search(r'when accessing (https?://[^\s]+)', error_message)
+
+        if not graphql_url_match:
+            return jsonify({"error": "Could not extract the GraphQL URL."}), 500
+
+        graphql_url = graphql_url_match.group(1)
+
+        # Step 2: Try to get the JSON from the GraphQL URL
+        graphql_response = requests.get(graphql_url, headers={'User-Agent': 'Mozilla/5.0'})
+        
+        if graphql_response.status_code == 200:
+            return jsonify(graphql_response.json())
+        else:
+            return jsonify({"error": f"Failed to fetch JSON from GraphQL URL. Status code: {graphql_response.status_code}"}), graphql_response.status_code
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/')
+def home():
+    return "Instagram JSON API is live. Use /json?url=INSTAGRAM_URL"
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8000)
