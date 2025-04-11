@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify
-import instaloader
 import requests
+import json
 import re
+import subprocess
 
 app = Flask(__name__)
 
@@ -11,36 +12,42 @@ def get_instagram_json():
     if not instagram_url or "instagram.com" not in instagram_url:
         return jsonify({"error": "Invalid or missing Instagram URL."}), 400
 
-    shortcode_match = re.search(r"/(p|reel|tv)/([^/?]+)", instagram_url)
-    if not shortcode_match:
-        return jsonify({"error": "Could not extract shortcode from URL."}), 400
-
-    shortcode = shortcode_match.group(2)
-
     try:
-        loader = instaloader.Instaloader()
-        post = instaloader.Post.from_shortcode(loader.context, shortcode)
-        return jsonify(post._asdict())  # contains all the metadata
+        # Step 1: Try using instaloader to fetch post info
+        cmd = ["instaloader", "--no-captions", "--no-pictures", "--no-videos", "--no-metadata-json", "--no-compress-json", "--", instagram_url]
+        process = subprocess.run(cmd, capture_output=True, text=True)
+
+        error_output = process.stderr
+
+        # First check for full GraphQL URL
+        graphql_url_match = re.search(r'(https?://www\.instagram\.com/graphql/query\?[^ ]+)', error_output)
+        if not graphql_url_match:
+            # Fallback: Try to extract partial /graphql/query... URL and prepend domain
+            partial_match = re.search(r'(/graphql/query\?[^ ]+)', error_output)
+            if partial_match:
+                graphql_url = "https://www.instagram.com" + partial_match.group(1)
+            else:
+                return jsonify({"error": "Could not extract GraphQL URL from error."}), 500
+        else:
+            graphql_url = graphql_url_match.group(1)
+
+        # Step 2: Fetch JSON from that GraphQL URL
+        graphql_response = requests.get(graphql_url, headers={'User-Agent': 'Mozilla/5.0'})
+
+        if graphql_response.status_code == 200:
+            return jsonify(graphql_response.json())
+        else:
+            return jsonify({
+                "error": f"Failed to fetch JSON from GraphQL URL.",
+                "status_code": graphql_response.status_code
+            }), graphql_response.status_code
+
     except Exception as e:
-        # Fallback: Try to extract GraphQL URL from the error message
-        error_str = str(e)
-        graphql_match = re.search(r'(\/graphql\/query\?[^\'\"\s]+)', error_str)
-        if graphql_match:
-            graphql_url = graphql_match.group(1)
-            if not graphql_url.startswith("http"):
-                graphql_url = "https://instagram.com" + graphql_url
-
-            try:
-                json_response = requests.get(graphql_url, headers={"User-Agent": "Mozilla/5.0"})
-                return jsonify(json_response.json()), json_response.status_code
-            except Exception as e2:
-                return jsonify({"error": f"Failed to fetch GraphQL URL: {str(e2)}"}), 500
-
-        return jsonify({"error": f"Instaloader failed: {error_str}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/')
 def home():
-    return "Instagram JSON API using Instaloader is live."
+    return "Instagram JSON API is live. Use /json?url=INSTAGRAM_URL"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
