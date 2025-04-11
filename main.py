@@ -1,6 +1,7 @@
 import requests
 import json
 import re
+import os
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -64,6 +65,7 @@ def get_instagram_json():
     
     return jsonify(json_data)
 
-# Run the Flask app
+# Run the Flask app with the correct port (needed for Render)
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Use the port from the environment or default to 5000
+    app.run(host="0.0.0.0", port=port)
