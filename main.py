@@ -23,14 +23,18 @@ def get_instagram_json():
         )
 
         error_message = response.json().get("error", "")
-        graphql_url_match = re.search(r'when accessing (https?://[^\s]+)', error_message)
+
+        graphql_url_match = re.search(r'(https?:\/\/www\.instagram\.com\/graphql\/[^\s"\']+|\/graphql\/[^\s"\']+)', error_message)
 
         if not graphql_url_match:
             return jsonify({"error": "Could not extract the GraphQL URL."}), 500
 
         graphql_url = graphql_url_match.group(1)
 
-        # Step 2: Try to get the JSON from the GraphQL URL
+        # Fix missing domain if needed
+        if graphql_url.startswith("/graphql"):
+            graphql_url = "https://www.instagram.com" + graphql_url
+
         graphql_response = requests.get(graphql_url, headers={'User-Agent': 'Mozilla/5.0'})
         
         if graphql_response.status_code == 200:
